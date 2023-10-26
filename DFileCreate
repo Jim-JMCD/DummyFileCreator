@@ -1,0 +1,592 @@
+#!/usr/bin/env bash
+# Author: Jim McDonald, Sydney
+#set -x
+function Usage(){
+cat << msg_end
+
+A test file generator that can generate random data in a directory tree or single directory. 
+  Minimum file number = 1
+  Minimum file size = 2 bytes  
+  Files can all be identical or individully filled with random content.
+--------------------
+-C CALCULATOR MODE (tree only) 
+ User data entry:  
+ - Tree depth and width
+ - Number files per directory
+ - File size to estimate storage usage. 
+ Generates tables of data trees of current and lesser dimensions.
+--------------------
+-D SINGLE DIRECTORY MODE
+ Best for small number of files and single file creation.
+ Options (details the TREE MODE section):
+ -n number of files, mandatory
+ -f -s -f File size, mandatory 
+ -o Output directory the exists, optional.   
+ -r Random content for fixed file sizes, optional.
+ -b Batch, optional.
+--------------------
+DIRECTORY TREE MODE  
+MANDATORY Options
+    n is a number, minimum is 1  
+ -d n   Depth. How many directories deep.
+ -w n   Width. How many directories wide.
+ -n n   Number of files in each directory.
+ Levels of files will be -d n+1  
+ Example: 
+ -d 1 -w 1 will produce two files
+ -d 8 will have 9 levels of files.
+ Increment tree by width safer and runs faster.
+ Incrementing by depth is very exponential. 
+
+FILE SIZE 
+ File sizes have to be designated by B, K, M or G
+ Example 2KiB = 2K, 3MiB = 3M 4GiB = 4G   
+ Minimum is 2B (2 bytes).
+
+Fixed size
+ Default is all files with identical content. 
+ -f Fixed file size [usage: -f 2K]  
+ -r Random content is generated individually for every file. 
+    Optional, only used with the -f option  
+
+Random size - Files individually filled with random content. 
+ -s Smallest file size.
+ -l Largest file size. 
+ If -s is omitted, the random range starts at 
+    2B (2 bytes) for -l input < 1G
+    1M (1Mib) for -l input >= 1G
+
+OPTIONAL
+ -o Output directory
+    Defaults to current working directory, 
+    Creates a time stamped directory for content.   
+ -b Batch run with no user check. 
+
+LOGGING
+None. In batch mode redirect output to a file  
+Has a progress indicator.
+ 
+LIMITATIONS
+Data creation bails out before any data creation if: 
+ - The number of directories to be created exceeds 100 million
+ - The number of files to be created exceeds 100 million
+ - If set to create random sized files and the shuf command is not available
+
+NOTES  
+Content is generated from /dev/urandom. This data CANNOT BE COMPRESSED, 
+Content can be used to simulate any application data that is compressed data, like video and other multimedia. 
+Generating random text content from /dev/urandom combined with base64 is too slow to be useful.
+
+Data storage and transmission tech that compresses or deduplicates data may not be that efficient.  
+
+Examples
+$(basename $0)  -D -f 500G -n 1 
+Create a single 500 GiB file in the current directory. 
+
+$(basename $0)  -D -f 5B  -n 10000000 -o ../where_ever
+Create a million 5 byte files in directory ../where_ever
+
+$(basename $0) -w 8 -d 4 -f 1M -n 30 -r -o ./test
+ Create a directory tree where Each directory contains 8 directories and 30 files
+ The tree will 4 directory levels deep. 
+ Storage used...... 137.14 GiB 
+ Total directories..4680
+ Total files......140430 each 1MiB
+ All with individual random content
+ All stored in test directory of current working directory. 
+
+Author: Jim McDonald, Sydney
+
+msg_end
+}
+#
+function Is_int(){
+   num=$1
+   if ! [[ $1 =~ ^[0-9]+$ ]] ; then
+      echo "$2 option requires a positive whole number, numbers with a decimal point not permitted"
+      exit 1
+   elif ((num == 0)) ; then
+      echo "$2  0 not permitted, must be at least 1 "
+      exit 1
+   fi
+}
+#_____________________________________________________
+function Get_bytes(){
+# returns bytes from being given input like 23K, 45M, 2G 
+str=$1
+count="$(echo $str | sed 's/.$//')"
+if ! [[ $count =~ ^[0-9]+$ ]] ; then
+   echo -1
+   return
+elif (( count == 0 )) ; then
+   echo -1
+   return
+fi
+unit="${str:(-1)}"
+case $unit in
+   B) echo $count ;; # Bytes
+   K) echo $((count*(2**10)));; # KiB
+   M) echo $((count*(2**20)));; # MiB
+   G) echo $((count*(2**30)));; # GiB
+   *) echo -1  ;;
+esac
+}
+#_____________________________________________________
+function Valid_size(){
+  valid=$(Get_bytes $1)
+  if (( valid == -1 )); then 
+    echo "${1} is not valid value for ${2}" 	  
+    exit 1
+  fi
+}
+#_____________________________________________________
+function Bytes_to_str(){
+  used=$1
+  one_KB=$((2**10))
+  one_MB=$((2**20))
+  one_GB=$((2**30))
+  one_TB=$((2**40))
+  one_PB=$((2**50))
+  if (( used <= 0 ));then # integer wrap around
+    printf ">100P"
+    return
+  fi 
+  if ((used < one_KB)); then
+     echo "${used}B"
+  elif (( used >= one_KB)) && (( used < one_MB)); then
+     echo $used | awk -v unit=$one_KB '{printf "%.2fK",$1/unit}'
+  elif (( used >= one_MB)) && (( used < one_GB)); then
+     echo $used | awk -v unit=$one_MB '{printf "%.2fM",$1/unit}'
+  elif (( used >= one_GB)) && (( used < one_TB)); then
+     echo $used | awk -v unit=$one_GB '{printf "%.2fG",$1/unit}'
+  elif (( used >= one_GB)) && (( used < one_PB)); then
+     echo $used | awk -v unit=$one_TB '{printf "%.2fT",$1/unit}'
+  elif (( used <= ( 100 * one_PB) )); then
+     echo $used | awk -v unit=$one_PB '{printf "%.2fP",$1/unit}'
+  else
+    printf ">100P" 
+  fi
+}
+Check_shuf_command(){
+   which shuf 2>&1 >/dev/null
+   rc=$?
+   if (( rc != 0)); then
+      echo "shuf (random numbers) not available - add to path or install" 
+      echo "shuf command required for random file sizes"
+      exit 1
+   fi  
+}
+###### Calculator ############################################
+function Width_print(){
+  local width=$1
+  local depth=$2
+  local print_all=$3
+  local files_per_dir=$4
+  local size_per_file=$5
+  current_depth=1
+  t_size="0B"
+  dir_usage=$((files_per_dir*size_per_file))
+  previous_dir_count=0
+  while ((current_depth<=depth)); do
+     previous_dir_count=$(((width*previous_dir_count)+width))
+     if ((files_per_dir>0)) && ((size_per_file==0)); then  # only return number files only
+        info=$((previous_dir_count * files_per_dir))
+     elif ((files_per_dir>0)) && ((size_per_file>0)); then # only return storage usage
+        if [ "$t_size" != ">100P" ] ; then # avoid integer wrap around   
+           t_size="$(Bytes_to_str $((previous_dir_count * dir_usage)))"
+        fi
+        echo $t_size
+     else
+        info=$previous_dir_count # only return directory count
+     fi
+     if (( info < 0 )); then # integer limit exceeded wrapped around
+        info=">100M"
+     elif ((info > 100000000));then
+        info=">100M"
+     fi
+     [ $print_all == "y" ] && echo $info # print every value
+     ((current_depth++))
+  done
+  [ $print_all != "y" ] && echo $info    # print only the total (last value)
+}
+#___________________________________
+function Print_tree_table(){
+  local max_width=$1
+  local max_depth=$2
+  local files_dir=$3
+  local size_file=$4
+  printf "Tree Depth"
+  for ((d=1;d<=$max_depth;d++)); do # print title 
+    printf "        %+2u" $d
+  done 
+  printf "\n          "
+  for ((d=1;d<=$max_depth;d++)); do # more title 
+    printf -- "----------" 
+  done 
+  echo
+  for ((w=1;w<=$max_width;w++)) ; do
+    printf "Width %+3u |" $w 
+    Width_print $w $max_depth y $files_dir $size_file | xargs printf "%10s"
+    echo
+  done
+}
+#___________________________________
+function Calculator (){
+  local dir_count=0
+  local file_count=0
+  local total_usage=0
+  local size_msg="File size requires units of B, K, M or G, the number must more than 1 decimal point not permitted"
+  while true ; do
+     clear
+     printf "\n%s\n" "$size_msg"
+     printf " i.e. 750K 34M  2G and 10B (10 bytes)\n\n"    
+     printf "Note: Two bytes (2B) file size is the minimum to build a tree, one bytes is permitted here for information only\n\n"    
+     read -p " Data tree directry depth  : " c_depth 
+     Is_int $c_depth "Depth"
+     read -p " Data tree directory width : " c_width
+     Is_int $c_width "Width"
+     read -p " Files per directory       : " c_file_num
+     Is_int $c_file_num "File count"
+     read -p " Size per file             : " c_file_size_tmp
+     c_file_size=$(Get_bytes $c_file_size_tmp)
+     if (( c_file_size == -1 )) ; then
+       echo "$size_msg " 
+       break
+     fi
+     dir_count=$(Width_print $c_width $c_depth n )
+        printf "\n Total number of directories : %+10s\n"  $dir_count
+     if [ $dir_count == ">100M" ] ; then
+        printf " Total number of files       :      >100M\n"
+     else
+        file_count=$((dir_count * c_file_num))
+        if (($file_count > 100000000)) || (( $file_count < 0 )); then
+           printf " Total number of files       :      >100M\n"
+        else
+           printf " Total number of files       : %+10u\n" $file_count
+        fi
+     fi
+     if [ $dir_count == ">100M" ]  ; then 
+        printf " Total storage usage         : check SHOW TREE below"
+     else
+        total_usage=$((dir_count * c_file_num * c_file_size))
+       if (( total_usage > 0 )) ;then 
+          printf " Total storage usage         : %+14s \n" "$(Bytes_to_str $total_usage)"
+       fi 
+     fi
+     printf "\n\n Tree data will wrap with small window\n FULL SREEN: Tree depth >17 output will wrap and be messy\n\n"
+     read -p " SHOW TREE [y/n]" more_info
+     if [[ $more_info != "n" ]] ; then #
+        printf "\n%12s Directories for each tree\n"  
+        Print_tree_table $c_width $c_depth 0 0
+        printf "\n%12s Files for each tree\n" 
+        Print_tree_table $c_width $c_depth $c_file_num 0
+        printf "\n%12s Maximum storage usage for each tree\n" 
+        Print_tree_table $c_width $c_depth $c_file_num $c_file_size
+        echo
+     fi
+     read -p " Run again [y/n]" again
+     [ $again == "n" ] && return
+  done
+}
+
+###### Calculator  End ############################################
+#
+###### Directory lister ##############################
+Make_tree_list(){
+  local depth=$1
+  local width=$2
+  local start_dir=$3
+  local dir_path=($start_dir)
+  for ((d=1; d<=depth; d++)); do
+     temp=()
+     for i in ${dir_path[@]}; do
+        temp_wide=()
+        for ((w=1; w<=$width; w++)); do
+           echo $i/$w
+           temp+=($i/$w)
+        done
+        temp_wide+=(${temp[@]})
+     done
+       dir_path=(${temp_wide[@]})
+  done
+}
+###  Make files for single directory ########################3
+function Make_file_1_dir(){
+  local dir_out=$1
+  local f_num=$2
+  local size_min=$3
+  local size_max=$4
+  local big_file=$((2**30)) # 1GiB
+  for (( i=1; i <= $f_num ; i++ )) ;  do
+     if (( size_max > big_file )); then
+         bsize=1048576 # 1024K, a work around for non-GNU dd
+         bcount_max=$((size_max/bsize))
+         bcount_min=$((size_min/bsize))
+         bcount=$(shuf -i ${bcount_min}-${bcount_max} -n1)
+     else
+         bsize=$(shuf -i ${size_min}-${size_max} -n1)
+         bcount=1
+     fi
+     dd bs=$bsize count=$bcount if=/dev/urandom of=${dir_out}/file_$i >/dev/null 2>&1
+    echo -n "."
+    (( ((i % 10) + 1) == 1 )) && echo " ${i} files created $(date)"
+  done
+  echo " All files created"
+}
+#---------------------------------------------------------------
+function Copy_file_1_dir(){
+  local dir_out=$1
+  local f_num=$2
+  local f_size=$3
+  local big_file=$((2**30)) # 1GiB
+  if (( f_size > big_file )); then
+      bsize=1048576 # 1024K, a work around for non-GNU dd
+      bcount=$((f_size/bsize))
+  else
+      bsize=$f_size
+      bcount=1
+  fi
+  dd bs=$bsize count=$bcount if=/dev/urandom of=${dir_out}/file_1 >/dev/null 2>&1
+  for (( i=2; i <= $f_num ; i++ )) ;  do
+    cp ${dir_out}/file_1 ${dir_out}/file_$i
+    echo -n "."
+    (( ((i % 10) + 1) == 1 )) && echo " ${i} files created $(date)"
+  done
+  echo " All files created"
+}
+###  Make files for directory tree ###########################
+function Copy_file_tree(){
+  local outdir=$1
+  local f_num=$2
+  local f_size=$3
+  local progress=0 
+  f_reference=${outdir}/f_tmp
+  local big_file=$((2**30)) # 1GiB
+
+  if (( f_size > big_file )); then
+      bsize=1048576 # 1024k, a work around for non-GNU dd
+      bcount=$((f_size/bsize))
+  else
+      bsize=$f_size
+      bcount=1
+  fi
+  dd bs=$bsize count=$bcount if=/dev/urandom of=$f_reference >/dev/null 2>&1
+  # fill tree with copies of reference file
+  while read dir ; do
+     for (( i=1; i <= $f_num ; i++ )) ;  do
+       cp ${f_reference} ${dir}/file_$i   
+     done
+   echo -n "."
+   ((progress++))
+   (( ((progress % 10) + 1) == 1 )) && echo " ${progress} directories filled $(date)"
+  done< <(find $outdir -type d -print)
+  rm $f_reference
+  echo " All files created" 
+}   
+#------------------------------------------------------------
+function Make_file_tree(){
+  local outdir=$1
+  local f_num=$2
+  local size_min=$3
+  local size_max=$4
+  local progress=0 
+  local big_file=$(((2**30)*1)) # 2GiB
+  while read dir ; do
+     for (( i=1; i <= $f_num ; i++ )) ;  do
+        if (( size_max > big_file )); then
+           bsize=1048576 # 1024, a work around for non-GNU dd 
+           bcount_min=$((size_min/bsize))
+           bcount_max=$((size_max/bsize))
+           bcount=$(shuf -i ${bcount_min}-${bcount_max} -n1)
+        else
+           bsize=$(shuf -i ${size_min}-${size_max} -n1)
+           bcount=1
+        fi
+        dd bs=$bsize count=$bcount if=/dev/urandom of=${dir}/file_$i >/dev/null 2>&1
+    done
+   echo -n "."
+   ((progress++))
+   (( ((progress % 10) + 1) == 1 )) && echo " ${progress} directories filled $(date)"
+  done< <(find $outdir -type d -print)
+  echo " All files created" 
+}   
+
+###########################
+if [ $# -eq 0 ] || [ $# -eq 2 ]; then
+ echo "FAILED. For more info run: $(basename $0) -h" 
+  exit 1
+elif [ $1 == "-C" ] ; then 
+  Calculator
+  exit 0
+fi
+# Now creating data, not calculating
+# _________________________________
+now=$(date +%y%m%d-%H%M-%S)
+start=$(date)
+# Some defaults
+file_num=0
+copy_mode="Y"
+copy_msg="All files identical, filled with the same set of random binary content"    
+check="Y" 
+single_dir="N"
+
+while getopts ":d:w:n::o:f:s:l:brxD" opt; do
+      case $opt in
+        D) single_dir="Y" ;; # All file in one dir, not a tree
+        d) Is_int $OPTARG "-d" && depth="$OPTARG"  ;;
+        w) Is_int $OPTARG "-w" && width="$OPTARG"  ;;
+        n) Is_int $OPTARG "-n" && file_num="$OPTARG" ;;  
+        f) Valid_size $OPTARG "-f" && fixed="$OPTARG"    ;; # fixed file size
+        s) Valid_size $OPTARG "-s" && smallest="$OPTARG" ;; # min file size
+        l) Valid_size $OPTARG "-l" && largest="$OPTARG"  ;; # max file size
+        o) output_tmp=${OPTARG}  ;; # output dir, default $PWD;
+        r) copy_mode="N" ; copy_msg="Random data created individualy for all files" ;;    
+        b) check="N" ;; # batch mode, no user checking before run
+        :) echo -e "An option requires an argument." ; exit 1 ;;
+        *) Usage ; exit ;;
+      esac
+done
+#shift "$(($OPTIND -1))"
+### checking prerequisite utilities.
+# if not given a valid output directory set it to the default ($PWD)
+if [ ! -d "$output_tmp" ]; then
+  output_dir=${PWD}/test_files_$now
+else
+  output_dir=${output_tmp}/test_files_$now
+fi 
+tree_dir=${output_dir}/0
+## Check size inputs #######################33
+size_fail_msg="Random file sizes require both -s (smallest) and -l (largest) and -s has to be smaller than -l"
+if [ ! -z "$fixed" ] ; then 
+   min_size=$(Get_bytes $fixed)
+   if (( min_size == 1 )) ; then
+      echo "Require a size of at least 2B (2 bytes) " && exit 1
+   else # and if -s or -l also set, they are ignored
+      file_size_msg="Files created are all ${fixed}"  
+   fi 
+   max_size=$min_size 
+elif [ ! -z "$smallest" ] && [  -z "$largest" ] ; then 
+   echo "$size_fail_msg" && exit 1
+elif [ ! -z "$smallest" ] && [ ! -z "$largest" ] ; then 
+   min_size=$(Get_bytes $smallest)
+   max_size=$(Get_bytes $largest)
+   if (( min_size > max_size )) ; then 
+      echo "$size_fail_msg" && exit 1
+   fi  
+   Check_shuf_command # bails out if no shuf command
+   file_size_msg="Files created in range ${smallest} to ${largest}"  
+   copy_mode="N"
+elif [ ! -z "$largest" ] ; then
+   max_size=$(Get_bytes $largest)
+   min_size=2
+   Check_shuf_command # bails out if no shuf command
+   file_size_msg="Files created in a range with no lower limit set to max of $(Bytes_to_str ${max_size})."  
+   copy_mode="N"
+fi
+if [ "$copy_mode" = "Y" ] ;then
+   copy_mode_msg="All files identical"  
+else
+   copy_mode_msg="Generated individually for each file"  
+fi 
+#### Single directory mode ##################################### 
+if [ $single_dir == "Y" ] ; then
+  cat << msg_done
+
+  Output: $output_dir
+  File size....... $file_size_msg  
+  File numebr..... $file_num 
+  Storage used.... $(Bytes_to_str $((file_num * max_size))) (potential maximum)  
+  Random content.. $copy_mode_msg
+msg_done
+
+  if [ "$check" = "Y" ] ; then
+    while true; do
+      read -p "Do you want to proceed? (y/n) " answer
+         case $answer in
+           y|Y) break;;
+           n|N) echo "Bye"; exit;;
+            * ) echo "Require y or n" ;;
+         esac
+    done
+    printf  " *** Early termination requires manual deletion of data created **** \n"
+    if [ "$err_msg" != "N" ] ; then  
+       echo $err_msg
+       exit
+    fi 
+  fi
+  mkdir $output_dir 
+  echo "Start $(date)" 
+  if [ $copy_mode = "Y" ] ;then
+     Copy_file_1_dir $output_dir $file_num $min_size $max_size 
+  else
+     Make_file_1_dir $output_dir $file_num $min_size $max_size 
+  fi # fill tree with copies of reference file
+  disk_usage=$(du -sb $output_dir | awk '{ printf "%s",$1}')
+  disk_usage_msg=$(Bytes_to_str $disk_usage)
+  echo -e "\nDisk usage $disk_usage_msg in directory $output_dir" 
+  echo "Finished $(date)" 
+  exit 0 ## DONE creating file content
+fi
+
+### TREE ####################################3
+total_dirs=$(Width_print $width $depth n 0 0)
+if [ $total_dirs = ">100M" ] ; then    
+   printf " Total number of files      :      >100M\n" 
+   printf " Total storage usage        :      >100M\n" 
+   printf " LIMITS EXCEEDED \n"  
+   exit 1    
+fi
+file_count=$((total_dirs * file_num))  
+if (( file_count < 0 )); then # reached integer limit  
+   printf " Total number of files      :      >100M\n" 
+   printf " LIMIT EXCEEDED \n"  
+   exit 1    
+fi
+#######file_count=$((file_count_tmp + file_num))
+max_used=$((file_count * max_size))
+if (( max_used <= 0 )) ;then
+  printf " Total storage usage        :      >100P\n" 
+  printf " LIMIT EXCEEDED \n" 
+  exit 1    
+fi 
+max_used_msg=$(Bytes_to_str $max_used)
+cat << msg_done
+  Test data directory tree :
+  Each directory contains $width directories and $file_num files 
+  The tree is $depth levels deep
+  Output: $output_dir
+   
+  $copy_msg
+  $file_size_msg
+  Storage used...... $max_used_msg (maximum potential)  
+  Random content.... $copy_mode_msg
+  Total directories..$(printf "%9s" $total_dirs|tr ' ' .) 
+  Total data files...$(printf "%9s" $file_count|tr ' ' .) 
+
+msg_done
+
+if [ "$check" = "Y" ] ; then
+   while true; do
+     read -p "Do you want to proceed? (y/n) " answer
+     case $answer in 
+       y|Y) break;;
+       n|N) echo "Bye"; exit;;
+        * ) echo "Require y or n" ;;
+     esac
+  done
+  printf  "\n *** Early termination requires manual deletion of data created **** \n"
+fi
+mkdir -p $tree_dir  
+echo "Start $(date)" 
+# Make directory tree
+Make_tree_list  $depth $width $tree_dir | xargs mkdir -p
+# now fill it with files
+if [ $copy_mode = "Y" ] ; then  # make reference file
+   Copy_file_tree $tree_dir $file_num $max_size 
+else
+   Make_file_tree $tree_dir $file_num $min_size $max_size 
+fi
+disk_usage=$(du -sb $output_dir | awk '{ printf "%s",$1}')
+disk_usage_msg=$(Bytes_to_str $disk_usage)
+echo -e "\nDisk usage $disk_usage_msg in directory $output_dir" 
+echo "Finished $(date)" 
