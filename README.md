@@ -1,4 +1,4 @@
-## DummyFileCreator ( *DFileCreate* )
+## Dummy File Creator ( *DFileCreate* )
 Dummy Data File Creator
 
 DFileCreate - a bash script to create files with random content. 
