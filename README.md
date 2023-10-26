@@ -1,6 +1,6 @@
-# DummyFileCreator
+## DummyFileCreator ( *DFileCreate* )
 Dummy Data File Creator 
-DFileCreator - a bash script to create files with random content. 
+DFileCreate - a bash script to create files with random content. 
 
 A test file generator that can generate random data in a directory tree or single directory.
 * Minimum file number = 1
@@ -11,9 +11,9 @@ A test file generator that can generate random data in a directory tree or singl
 * The number of directories and files within a tree increases exponentially as tree width and dept increase. Tree width increase more slowly, tree depth is very exponential.
 * Includes a calculator option.   
 
-DFileCreator -h lists all options   
+DFileCreate -h lists all options   
 
-Use DFileCreator -C  calculator option to explore directory and files numbers and resource usage.
+Use DFileCreate -C  calculator option to explore directory and files numbers and resource usage.
 
 Calculator limits: 100 PiB, 100 million files and directories, 
 
