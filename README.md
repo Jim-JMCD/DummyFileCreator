@@ -1,5 +1,6 @@
 ## DummyFileCreator ( *DFileCreate* )
-Dummy Data File Creator 
+Dummy Data File Creator
+
 DFileCreate - a bash script to create files with random content. 
 
 A test file generator that can generate random data in a directory tree or single directory.
