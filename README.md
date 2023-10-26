@@ -19,5 +19,6 @@ Calculator limits: 100 PiB, 100 million files and directories,
 
 Recommended maximum tree size for full screen terminal 17 depth, no limit on tree width
 
+_Inspired by HPCreateData (~2003)_
   
 Author - Jim McDonald, Sydney 
