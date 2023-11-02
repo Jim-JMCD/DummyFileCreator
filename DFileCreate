@@ -54,7 +54,7 @@ Random size - Files individually filled with random content.
  -l Largest file size. 
  If -s is omitted, the random range starts at 
     2B (2 bytes) for -l input < 1G
-    1M (1Mib) for -l input >= 1G
+    1M (1MiB) for -l input >= 1G
 
 OPTIONAL
  -o Output directory
