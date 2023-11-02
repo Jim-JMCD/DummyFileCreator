@@ -168,7 +168,7 @@ function Bytes_to_str(){
   fi
 }
 Check_shuf_command(){
-   which shuf 2>&1 >/dev/null
+   which shuf >/dev/null 2>&1 
    rc=$?
    if (( rc != 0)); then
       echo "shuf (random numbers) not available - add to path or install" 
