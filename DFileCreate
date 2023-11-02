@@ -63,8 +63,8 @@ OPTIONAL
  -b Batch run with no user check. 
 
 LOGGING
-None. In batch mode redirect output to a file  
-Has a progress indicator.
+None. In batch mode user has to redirect output to a file  
+Progress indicated by time stamping every ten directories filled with files.
  
 LIMITATIONS
 Data creation bails out before any data creation if: 
@@ -86,14 +86,14 @@ Create a single 500 GiB file in the current directory.
 $(basename $0)  -D -f 5B  -n 10000000 -o ../where_ever
 Create a million 5 byte files in directory ../where_ever
 
-$(basename $0) -w 8 -d 4 -f 1M -n 30 -r -o ./test
- Create a directory tree where Each directory contains 8 directories and 30 files
- The tree will 4 directory levels deep. 
+$(basename $0) -w 8 -d 4 -f 1M -n 30 -r -o ./test_data
+ Create a directory tree where each directory contains eight directories and 30 files
+ The tree will be four directory levels deep. 
  Storage used...... 137.14 GiB 
  Total directories..4680
  Total files......140430 each 1MiB
  All with individual random content
- All stored in test directory of current working directory. 
+ All stored in test_data directory of current working directory. 
 
 Author: Jim McDonald, Sydney
 
